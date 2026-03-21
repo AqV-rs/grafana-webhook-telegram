@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("grafana-telegram-webhook")
 
-app = FastAPI(title="Grafana to Telegram Relay", version="2.0.0")
+app = FastAPI(title="Grafana to Telegram Relay", version="2.0.1")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
@@ -18,6 +18,12 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 DEFAULT_PARSE_MODE = os.getenv("DEFAULT_PARSE_MODE", "HTML").strip() or None
 DISABLE_WEB_PAGE_PREVIEW = os.getenv("DISABLE_WEB_PAGE_PREVIEW", "true").lower() in {"1", "true", "yes", "on"}
 SEND_RAW_JSON_FALLBACK = os.getenv("SEND_RAW_JSON_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def mask_token(text: str) -> str:
+    if not TELEGRAM_BOT_TOKEN:
+        return text
+    return text.replace(TELEGRAM_BOT_TOKEN, "***")
 
 
 def load_routes() -> Dict[str, List[Dict[str, Any]]]:
@@ -45,10 +51,6 @@ def load_routes() -> Dict[str, List[Dict[str, Any]]]:
                     targets.append({"chat_id": str(item)})
                 elif isinstance(item, dict) and "chat_id" in item:
                     entry = {"chat_id": str(item["chat_id"])}
-                    if "message_thread_id" in item:
-                        entry["message_thread_id"] = int(item["message_thread_id"])
-                    if "disable_notification" in item:
-                        entry["disable_notification"] = bool(item["disable_notification"])
                     if "parse_mode" in item and item["parse_mode"]:
                         entry["parse_mode"] = str(item["parse_mode"])
                     targets.append(entry)
@@ -83,18 +85,17 @@ async def send_telegram_message(target: Dict[str, Any], text: str) -> Dict[str, 
     if parse_mode:
         payload["parse_mode"] = parse_mode
 
-    if "message_thread_id" in target:
-        payload["message_thread_id"] = target["message_thread_id"]
-
-    if "disable_notification" in target:
-        payload["disable_notification"] = target["disable_notification"]
-
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(url, json=payload)
 
     if response.status_code >= 400:
-        logger.error("Telegram send failed: status=%s body=%s", response.status_code, response.text)
-        raise HTTPException(status_code=502, detail=f"Telegram API error: {response.text}")
+        safe_body = mask_token(response.text)
+        logger.error(
+            "Telegram send failed: status=%s body=%s",
+            response.status_code,
+            safe_body,
+        )
+        raise HTTPException(status_code=502, detail=f"Telegram API error: {safe_body}")
 
     return response.json()
 
@@ -107,10 +108,9 @@ def extract_message(payload: Dict[str, Any]) -> str:
     title = _string(payload.get("title", ""))
     message = _string(payload.get("message", ""))
 
-    if title and message:
-        return f"{title}\n\n{message}"
     if message:
         return message
+
     if title:
         return title
 
@@ -175,18 +175,20 @@ async def receive_webhook(
 
     text = extract_message(payload)
     results = []
+
     for target in ROUTES[route_path]:
         telegram_result = await send_telegram_message(target, text)
         results.append(
             {
                 "chat_id": target["chat_id"],
-                "message_thread_id": target.get("message_thread_id"),
                 "telegram_ok": telegram_result.get("ok", False),
             }
         )
 
-    return JSONResponse({
-        "ok": True,
-        "route": route_path,
-        "sent_to": results,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "route": route_path,
+            "sent_to": results,
+        }
+    )
