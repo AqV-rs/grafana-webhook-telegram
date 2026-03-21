@@ -1,6 +1,9 @@
 # Grafana → Telegram relay
 
-Python-сервис для приема webhook от Grafana и отправки сообщений в Telegram.
+- Python-сервис для приема webhook от Grafana и отправки сообщений в Telegram. 
+- Grafana не поддерживает proxy для встроенного Telegram Contact points. 
+- Для того чтобы не внедрять vpn внутри закрытого контура -> создан сервис. Сервис должен быть размещен на VPS в странах без ограниченного доступа к `api.telegram.org`
+- Сервис из коробки не поддерживает `https`, используйте revers proxy
 
 ## Что делает
 
@@ -64,7 +67,7 @@ curl -X POST http://localhost:8000/grafana/prod \
 Рекомендуемая схема:
 
 - для каждой логической группы сделать свой webhook URL
-- в Grafana использовать Notification templates для формирования `title` / `message`
+- в Grafana использовать Notification templates для формирования `message`
 
 Например:
 
@@ -100,6 +103,15 @@ Panel: {{ $a.PanelURL }}
 - `https://alerts.example.com/grafana/dev`
 - `https://alerts.example.com/grafana/db`
 
+Указать URL, в PROD среде рекомендую спрятать сервис за Nginx и закрыть за https
+<img width="1042" height="267" alt="image" src="https://github.com/user-attachments/assets/d3893066-baa4-4e96-ae32-7b6485e4dce2" />
+
+Указать Extra Headers для минимальной безопасности
+<img width="982" height="214" alt="image" src="https://github.com/user-attachments/assets/bb19fcf6-338e-4531-a096-321e65eebdd8" />
+
+Создать темлейт и привязать его
+<img width="982" height="98" alt="image" src="https://github.com/user-attachments/assets/3da28cbe-1f43-4ac7-b131-985e36ccde4f" />
+
 ## Важные замечания
 
 ### HTML parse mode
@@ -117,5 +129,3 @@ Panel: {{ $a.PanelURL }}
 ### Ограничение Telegram
 
 У Telegram есть ограничение на длину текста сообщения. Если payload fallback-режима слишком длинный, JSON будет обрезан.
-
-## Подключение в Grafana
