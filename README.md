@@ -1,20 +1,35 @@
 # Grafana → Telegram relay
 
-Python-сервис для приема webhook от Grafana и отправки сообщений в Telegram. 
-Grafana не поддерживает proxy для встроенного Telegram Contact points, для того чтобы не внедрять vpn внутри закрытого контура -> создан сервис. Сервис должен быть размещен на VPS в странах без ограниченного доступа к `api.telegram.org`
+Небольшой Python-сервис, который принимает webhook от Grafana и пересылает сообщения в Telegram.
+
+Сервис создан для обхода ограничений доступа к Telegram API.
+
+Обычно разворачивается на внешнем сервере (VPS) и работает как relay между Grafana и Telegram.
+
+## TL;DR
+
+Grafana → webhook → relay service → Telegram
 
 ## Что делает
 
 - принимает webhook от Grafana
-- **не шаблонизирует сообщение внутри Python**
-- берет уже готовый текст из payload от Grafana
-- маршрутизирует уведомление в один или несколько Telegram-чатов по URL
-- умеет проверять `X-Webhook-Secret`
+- использует готовый текст из payload (`message`)
+- не изменяет и не шаблонизирует сообщение
+- маршрутизирует уведомления по URL в один или несколько Telegram-чатов
+- поддерживает проверку `X-Webhook-Secret`
 
-## Логика извлечения текста
+## Как это работает
 
-Сервис ищет `message`, то есть шаблонами управляем в Grafana, а сервис только пересылает.
+1. Grafana отправляет webhook на endpoint сервиса
+2. Сервис проверяет `X-Webhook-Secret` (если задан)
+3. Из payload извлекается поле `message`
+4. Сообщение отправляется в соответствующие Telegram-чаты
 
+## Requirements
+
+- Docker + Docker Compose
+- Telegram Bot Token
+   
 ## Конфиг
 
 Основные переменные в `.env`:
@@ -62,12 +77,33 @@ curl -X POST http://localhost:8000/grafana/prod \
 
 ## Настройка в Grafana
 
-Рекомендуемая схема:
+### 1. Создать webhook endpoint
 
-- для каждой логической группы сделать свой webhook URL
-- в Grafana использовать Notification templates для формирования `message`
+Для каждой логической группы создайте отдельный URL:
 
-Например:
+- `https://alerts.example.com/grafana/prod`
+- `https://alerts.example.com/grafana/dev`
+- `https://alerts.example.com/grafana/db`
+
+---
+
+### 2. Настроить Contact point
+
+В Contact point укажите:
+
+- URL сервиса
+- метод: `POST`
+
+При необходимости добавьте заголовок в Extra Headers:
+`X-Webhook-Secret: <your_secret>`
+
+---
+
+### 3. Настроить шаблон сообщения
+
+Рекомендуется использовать Notification templates и формировать поле `message`.
+
+Пример шаблона:
 
 ```
 {{ define "telegram.message" }}
@@ -93,28 +129,17 @@ Panel: {{ $a.PanelURL }}
 {{ end }}
 ```
 
-- в Contact point указывать URL этого сервиса
+---
 
-Например:
+### 4. Привязать шаблон к Contact point
 
-- `https://alerts.example.com/grafana/prod`
-- `https://alerts.example.com/grafana/dev`
-- `https://alerts.example.com/grafana/db`
+Укажите созданный template в настройках Contact point.
+  
+## Ограничения и особенности
 
-Указать URL, в PROD среде рекомендую спрятать сервис за Nginx и закрыть за https
-<img width="1042" height="267" alt="image" src="https://github.com/user-attachments/assets/d3893066-baa4-4e96-ae32-7b6485e4dce2" />
+### Форматирование сообщений
 
-Указать Extra Headers для минимальной безопасности
-<img width="982" height="214" alt="image" src="https://github.com/user-attachments/assets/bb19fcf6-338e-4531-a096-321e65eebdd8" />
-
-Создать темлейт и привязать его
-<img width="982" height="98" alt="image" src="https://github.com/user-attachments/assets/3da28cbe-1f43-4ac7-b131-985e36ccde4f" />
-
-## Важные замечания
-
-### HTML parse mode
-
-По умолчанию включен `HTML`, значит в шаблонах Grafana можно использовать:
+По умолчанию используется `HTML` parse mode, поэтому в шаблонах Grafana можно использовать:
 
 - `<b>жирный</b>`
 - `<i>курсив</i>`
@@ -122,12 +147,26 @@ Panel: {{ $a.PanelURL }}
 - `<a href="https://example.com">ссылка</a>`
 - `<pre>formatted text</pre>`
 
-Важно экранировать спецсимволы, если Grafana может подставлять сырой текст с `<` или `&`.
+Важно: экранируйте спецсимволы (`<`, `&`), если Grafana подставляет сырой текст.
 
-### Ограничение Telegram
+---
 
-У Telegram есть ограничение на длину текста сообщения. Если payload fallback-режима слишком длинный, JSON будет обрезан.
+### Ограничения Telegram
 
-### Безопасная передача данных
+Telegram ограничивает длину сообщения.
 
-Сервис из коробки не поддерживает `https`, используйте revers proxy, так как Алерты могут содержать компромитирующие данные 
+Если текст слишком длинный, сообщение может быть обрезано.
+
+---
+
+### Безопасность
+
+- Сервис не поддерживает `https` из коробки
+- Используйте reverse proxy (например, Nginx)
+- Обязательно включайте `X-Webhook-Secret`
+
+Алерты могут содержать чувствительные данные — не оставляйте сервис публично доступным без защиты.
+
+## License
+
+MIT License © 2026 Nikita Liskov
